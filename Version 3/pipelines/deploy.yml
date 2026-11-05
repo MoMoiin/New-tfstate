@@ -1,0 +1,60 @@
+# Pipeline: operate-iac-deploy
+#
+# One pipeline for every service. Per environment (dev-uks -> uat-uks -> prod-uks):
+#   plan   `terragrunt run --all plan` over that environment's units, plans saved as an artifact
+#   apply  main only, after approval on the Azure DevOps environment operate-iac-<env>:
+#          `terragrunt run --all apply` of exactly those saved plans
+# Terragrunt orders units by their `dependencies` blocks (service.hcl), so there is no
+# order to maintain here. PRs plan every environment and apply nothing.
+
+parameters:
+  - name: firstDeploy
+    displayName: First deploy of an environment (apply without saved plans - see README)
+    type: boolean
+    default: false
+
+trigger:
+  branches:
+    include: [main]
+  paths:
+    exclude: ['*.md']
+
+pr:
+  branches:
+    include: [main]
+  paths:
+    exclude: ['*.md']
+
+stages:
+  - stage: checks
+    displayName: Checks
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      - job: fmt
+        displayName: Format
+        steps:
+          - template: templates/tools.yml
+          - bash: |
+              set -euo pipefail
+              terraform fmt -check -recursive -diff .
+              terragrunt hcl fmt --check --diff
+            displayName: terraform fmt / terragrunt hcl fmt
+
+  - template: templates/environment.yml
+    parameters:
+      environment: dev-uks
+      after: checks
+      firstDeploy: ${{ parameters.firstDeploy }}
+
+  - template: templates/environment.yml
+    parameters:
+      environment: uat-uks
+      after: apply_dev_uks
+      firstDeploy: ${{ parameters.firstDeploy }}
+
+  - template: templates/environment.yml
+    parameters:
+      environment: prod-uks
+      after: apply_uat_uks
+      firstDeploy: ${{ parameters.firstDeploy }}

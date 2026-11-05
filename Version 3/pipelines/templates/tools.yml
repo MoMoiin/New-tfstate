@@ -1,0 +1,20 @@
+# Installs the Terraform and Terragrunt versions pinned in .tool-versions (the same file
+# mise/asdf use locally), so CI and laptops can't drift.
+
+steps:
+  - bash: |
+      set -euo pipefail
+      tf=$(awk '$1 == "terraform" { print $2 }' .tool-versions)
+      tg=$(awk '$1 == "terragrunt" { print $2 }' .tool-versions)
+      bin="$(Agent.ToolsDirectory)/iac/tf-$tf-tg-$tg"
+      if [ ! -x "$bin/terragrunt" ]; then
+        mkdir -p "$bin"
+        curl -sSfLo "$(Agent.TempDirectory)/terraform.zip" \
+          "https://releases.hashicorp.com/terraform/$tf/terraform_${tf}_linux_amd64.zip"
+        unzip -oq "$(Agent.TempDirectory)/terraform.zip" -d "$bin"
+        curl -sSfLo "$bin/terragrunt" \
+          "https://github.com/gruntwork-io/terragrunt/releases/download/v$tg/terragrunt_linux_amd64"
+        chmod +x "$bin/terragrunt"
+      fi
+      echo "##vso[task.prependpath]$bin"
+    displayName: Install Terraform + Terragrunt (.tool-versions)

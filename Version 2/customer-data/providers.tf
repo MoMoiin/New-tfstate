@@ -1,0 +1,21 @@
+terraform {
+  required_version = "~> 1.13"
+
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "azurerm" {
+  subscription_id                 = local.g.subscription_id
+  resource_provider_registrations = "none"
+
+  features {
+    key_vault {
+      purge_soft_delete_on_destroy = false
+    }
+  }
+}

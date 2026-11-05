@@ -1,0 +1,110 @@
+# Plan + apply stages for one tier: a pair per environment, dev -> uat -> prod.
+#
+#   plan_<env>   one job per (service, customer), all in parallel. Saves the plan as an
+#                artifact when it has changes; `summary` says whether anything changed at all.
+#   apply_<env>  main branch only, and only if something changed. Runs against the Azure DevOps
+#                environment operate-iac-<env> (put the approvals there), applying the saved
+#                plans in dependency order.
+#
+# The next environment's plan waits for this one's apply. On PRs and other branches every
+# environment is planned and nothing is applied.
+#
+# Job name ("key") = service, or service_customer, with '-' -> '_'.
+
+parameters:
+  - name: services # [{ name, dependsOn: [...] }] - dependsOn lists services in THIS pipeline only
+    type: object
+  - name: customers # [''] for tiers that aren't per customer
+    type: object
+    default: ['']
+  - name: environments
+    type: object
+    default:
+      - { name: dev-uks }
+      - { name: uat-uks, after: dev-uks }
+      - { name: prod-uks, after: uat-uks }
+  - name: selfHosted # false = Microsoft-hosted (only hub, which creates the self-hosted agents)
+    type: boolean
+    default: true
+  - name: terraformVersion
+    type: string
+    default: '1.13.3'
+  - name: secrets # env var -> $(secret) from the variable group, e.g. { TF_VAR_x: $(x) }
+    type: object
+    default: {}
+
+stages:
+  - ${{ each env in parameters.environments }}:
+      - stage: plan_${{ replace(env.name, '-', '_') }}
+        displayName: Plan ${{ env.name }}
+        ${{ if env.after }}:
+          dependsOn: apply_${{ replace(env.after, '-', '_') }}
+          condition: not(or(failed(), canceled()))
+        ${{ else }}:
+          dependsOn: []
+        variables:
+          - group: operate-iac-${{ env.name }}
+        pool:
+          ${{ if parameters.selfHosted }}:
+            name: operate-ci-runner-${{ env.name }}
+          ${{ else }}:
+            vmImage: ubuntu-latest
+        jobs:
+          - ${{ each customer in parameters.customers }}:
+              - ${{ each svc in parameters.services }}:
+                  - template: plan-job.yml
+                    parameters:
+                      key: ${{ replace(iif(eq(customer, ''), svc.name, format('{0}_{1}', svc.name, customer)), '-', '_') }}
+                      service: ${{ svc.name }}
+                      customer: ${{ customer }}
+                      environment: ${{ env.name }}
+                      terraformVersion: ${{ parameters.terraformVersion }}
+                      secrets: ${{ parameters.secrets }}
+
+          - job: summary
+            displayName: Any changes?
+            dependsOn:
+              - ${{ each customer in parameters.customers }}:
+                  - ${{ each svc in parameters.services }}:
+                      - ${{ replace(iif(eq(customer, ''), svc.name, format('{0}_{1}', svc.name, customer)), '-', '_') }}
+            variables:
+              ${{ each customer in parameters.customers }}:
+                ${{ each svc in parameters.services }}:
+                  ${{ format('changes_{0}', replace(iif(eq(customer, ''), svc.name, format('{0}_{1}', svc.name, customer)), '-', '_')) }}: $[ dependencies.${{ replace(iif(eq(customer, ''), svc.name, format('{0}_{1}', svc.name, customer)), '-', '_') }}.outputs['tf.changes'] ]
+            steps:
+              - checkout: none
+              - bash: |
+                  if env | grep -q '^CHANGES_.*=true$'; then any=true; else any=false; fi
+                  echo "Changes to apply: $any"
+                  echo "##vso[task.setvariable variable=any;isOutput=true]$any"
+                name: changes
+
+      - stage: apply_${{ replace(env.name, '-', '_') }}
+        displayName: Apply ${{ env.name }}
+        dependsOn: plan_${{ replace(env.name, '-', '_') }}
+        condition: >-
+          and(succeeded(),
+              ne(variables['Build.Reason'], 'PullRequest'),
+              eq(variables['Build.SourceBranch'], 'refs/heads/main'),
+              eq(dependencies.plan_${{ replace(env.name, '-', '_') }}.outputs['summary.changes.any'], 'true'))
+        variables:
+          - group: operate-iac-${{ env.name }}
+        pool:
+          ${{ if parameters.selfHosted }}:
+            name: operate-ci-runner-${{ env.name }}
+          ${{ else }}:
+            vmImage: ubuntu-latest
+        jobs:
+          - ${{ each customer in parameters.customers }}:
+              - ${{ each svc in parameters.services }}:
+                  - template: apply-job.yml
+                    parameters:
+                      key: ${{ replace(iif(eq(customer, ''), svc.name, format('{0}_{1}', svc.name, customer)), '-', '_') }}
+                      service: ${{ svc.name }}
+                      customer: ${{ customer }}
+                      environment: ${{ env.name }}
+                      terraformVersion: ${{ parameters.terraformVersion }}
+                      secrets: ${{ parameters.secrets }}
+                      dependsOn:
+                        - ${{ each upstream in svc.dependsOn }}:
+                            - ${{ replace(iif(eq(customer, ''), upstream, format('{0}_{1}', upstream, customer)), '-', '_') }}

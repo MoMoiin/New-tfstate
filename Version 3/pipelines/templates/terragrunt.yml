@@ -1,0 +1,24 @@
+# Signs in with the environment's service connection (workload identity federation) and runs
+# `terragrunt run --all` over every unit of one environment.
+
+parameters:
+  - name: environment
+    type: string
+  - name: args # terragrunt flags, then `--` and the terraform command
+    type: string
+
+steps:
+  - task: AzureCLI@2
+    displayName: terragrunt ${{ parameters.environment }}
+    inputs:
+      azureSubscription: sc-operate-iac-${{ parameters.environment }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      addSpnToEnvironment: true
+      inlineScript: |
+        set -euo pipefail
+        export ARM_USE_OIDC=true ARM_CLIENT_ID="$servicePrincipalId" ARM_TENANT_ID="$tenantId" ARM_OIDC_TOKEN="$idToken"
+        terragrunt run --all --non-interactive \
+          --filter './*/env/${{ parameters.environment }}' \
+          --filter './*/env/${{ parameters.environment }}/*' \
+          ${{ parameters.args }}

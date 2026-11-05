@@ -1,0 +1,47 @@
+# Pipeline: operate-iac-customer
+# Customer tier, one plan/apply per (customer, service). Runs after operate-iac-platform
+# completes on main, or for its own changes.
+#
+# Add a new customer to `customers` below as well as its env/<environment>/<customer>.tfvars.
+# A customer with no tfvars in an environment is skipped there. Manual runs can pick a subset.
+
+parameters:
+  - name: customers
+    type: object
+    default:
+      - acme
+
+trigger:
+  branches:
+    include: [main]
+  paths:
+    include:
+      - customer-*
+      - pipelines/customer.yml
+      - pipelines/templates
+
+pr:
+  branches:
+    include: [main]
+  paths:
+    include:
+      - customer-*
+      - pipelines/customer.yml
+      - pipelines/templates
+
+resources:
+  pipelines:
+    - pipeline: platform
+      source: operate-iac-platform
+      trigger:
+        branches:
+          include: [main]
+
+stages:
+  - template: templates/stages.yml
+    parameters:
+      customers: ${{ parameters.customers }}
+      services:
+        - { name: customer-network, dependsOn: [] }
+        - { name: customer-data,    dependsOn: [customer-network] }
+        - { name: customer-app,     dependsOn: [customer-data] }

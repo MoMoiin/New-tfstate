@@ -1,0 +1,55 @@
+# Pipeline: operate-iac-platform
+# Hub + shared services. First in the chain: also runs for changes to global/ and scripts/,
+# and its completion on main triggers operate-iac-app-services and operate-iac-customer.
+# Microsoft-hosted agents: ci-runner creates the self-hosted ones, so this can't need them.
+#
+# Triggers on everything except the other pipelines' folders, so a new platform service is
+# picked up without editing the filters - but it still has to be added to `services` below.
+
+trigger:
+  branches:
+    include: [main]
+  paths:
+    exclude:
+      - app-services-*
+      - customer-*
+      - pipelines/app-services.yml
+      - pipelines/customer.yml
+      - README.md
+
+pr:
+  branches:
+    include: [main]
+  paths:
+    exclude:
+      - app-services-*
+      - customer-*
+      - pipelines/app-services.yml
+      - pipelines/customer.yml
+      - README.md
+
+stages:
+  - template: templates/stages.yml
+    parameters:
+      selfHosted: false
+      services:
+        # Hub + shared
+        - { name: network,           dependsOn: [] }
+        - { name: key-vault,         dependsOn: [network] }
+        # Hub
+        - { name: domain-controller, dependsOn: [network] }
+        - { name: private-dns,       dependsOn: [network] }
+        - { name: ci-runner,         dependsOn: [network] }
+        - { name: image-gallery,     dependsOn: [] }
+        - { name: log-analytics,     dependsOn: [] }
+        # Shared
+        - { name: sql-server,        dependsOn: [] }
+        - { name: storage,           dependsOn: [] }
+        - { name: databricks,        dependsOn: [] }
+        - { name: app-gateway,       dependsOn: [network] }
+        # These three write their A records into the hub's operate.internal zone; prizm also
+        # joins the domain.
+        - { name: app-cluster,       dependsOn: [network, private-dns] }
+        - { name: prizm,             dependsOn: [network, private-dns, domain-controller] }
+        - { name: seq,               dependsOn: [network, private-dns] }
+        - { name: sql-monitoring,    dependsOn: [sql-server] }

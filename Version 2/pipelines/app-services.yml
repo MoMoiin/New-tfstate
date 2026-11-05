@@ -1,0 +1,35 @@
+# Pipeline: operate-iac-app-services
+# App Services tier. Runs after operate-iac-platform completes on main, or for its own changes.
+
+trigger:
+  branches:
+    include: [main]
+  paths:
+    include:
+      - app-services-*
+      - pipelines/app-services.yml
+      - pipelines/templates
+
+pr:
+  branches:
+    include: [main]
+  paths:
+    include:
+      - app-services-*
+      - pipelines/app-services.yml
+      - pipelines/templates
+
+resources:
+  pipelines:
+    - pipeline: platform
+      source: operate-iac-platform
+      trigger:
+        branches:
+          include: [main]
+
+stages:
+  - template: templates/stages.yml
+    parameters:
+      services:
+        - { name: app-services-network, dependsOn: [] }
+        - { name: app-services-web-app, dependsOn: [app-services-network] }

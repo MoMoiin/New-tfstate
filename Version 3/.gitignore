@@ -1,0 +1,26 @@
+# Terraform / Terragrunt
+.terragrunt-cache/
+.terragrunt-stack/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+.terraformrc
+terraform.rc
+# Commit .terraform.lock.hcl in each unit (Terragrunt copies it back after init) so plan and
+# apply use the same provider builds.
+# Secrets go through TF_VAR_* from the pipeline variable group, never tfvars.
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs / temp
+*.log
+*.tmp

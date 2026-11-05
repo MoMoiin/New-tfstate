@@ -1,0 +1,35 @@
+# Plans one service (for one customer) and publishes the plan if it has changes.
+# Output: <key>.tf.changes = true | false (read by summary and the apply job).
+
+parameters:
+  - name: key
+    type: string
+  - name: service
+    type: string
+  - name: customer
+    type: string
+  - name: environment
+    type: string
+  - name: terraformVersion
+    type: string
+  - name: secrets
+    type: object
+
+jobs:
+  - job: ${{ parameters.key }}
+    displayName: ${{ parameters.service }} ${{ parameters.customer }}
+    steps:
+      - checkout: self
+
+      - template: terraform-steps.yml
+        parameters:
+          service: ${{ parameters.service }}
+          customer: ${{ parameters.customer }}
+          environment: ${{ parameters.environment }}
+          terraformVersion: ${{ parameters.terraformVersion }}
+          secrets: ${{ parameters.secrets }}
+          args: plan -input=false -detailed-exitcode -out=$(Build.ArtifactStagingDirectory)/tfplan
+
+      - publish: $(Build.ArtifactStagingDirectory)/tfplan
+        artifact: tfplan-${{ parameters.environment }}-${{ parameters.key }}
+        condition: and(succeeded(), eq(variables['tf.changes'], 'true'))

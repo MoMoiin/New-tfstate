@@ -1,0 +1,65 @@
+# Installs Terraform, signs in with the environment's service connection (workload identity
+# federation) and runs scripts/terraform.sh for one target.
+#
+# Step `tf` sets output `changes`:
+#   - plan -detailed-exitcode: exit 2 = changes -> true, 0 -> false
+#   - no tfvars for this environment/customer: the service isn't enabled here -> false, skipped
+
+parameters:
+  - name: service
+    type: string
+  - name: customer
+    type: string
+  - name: environment
+    type: string
+  - name: terraformVersion
+    type: string
+  - name: secrets
+    type: object
+  - name: args
+    type: string
+
+steps:
+  - bash: |
+      set -euo pipefail
+      v='${{ parameters.terraformVersion }}'
+      dir="$(Agent.ToolsDirectory)/terraform/$v"
+      if [ ! -x "$dir/terraform" ]; then
+        mkdir -p "$dir"
+        curl -sSfLo "$(Agent.TempDirectory)/terraform.zip" \
+          "https://releases.hashicorp.com/terraform/$v/terraform_${v}_linux_amd64.zip"
+        unzip -oq "$(Agent.TempDirectory)/terraform.zip" -d "$dir"
+      fi
+      echo "##vso[task.prependpath]$dir"
+    displayName: Install Terraform ${{ parameters.terraformVersion }}
+
+  - task: AzureCLI@2
+    name: tf
+    displayName: terraform ${{ parameters.service }} ${{ parameters.customer }}
+    inputs:
+      azureSubscription: sc-operate-iac-${{ parameters.environment }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      addSpnToEnvironment: true
+      inlineScript: |
+        set -uo pipefail
+        service='${{ parameters.service }}' environment='${{ parameters.environment }}' customer='${{ parameters.customer }}'
+
+        if [ -n "$customer" ]; then tfvars="$service/env/$environment/$customer.tfvars"; else tfvars="$service/env/$environment.tfvars"; fi
+        if [ ! -f "$tfvars" ]; then
+          echo "No $tfvars - $service is not enabled in $environment${customer:+ for $customer}, skipping."
+          echo "##vso[task.setvariable variable=changes;isOutput=true]false"
+          exit 0
+        fi
+
+        export ARM_USE_OIDC=true ARM_CLIENT_ID="$servicePrincipalId" ARM_TENANT_ID="$tenantId" ARM_OIDC_TOKEN="$idToken"
+
+        bash scripts/terraform.sh "$service" "$environment" ${customer:+"$customer"} ${{ parameters.args }}
+        rc=$?
+        case $rc in
+          0) changes=false ;;
+          2) changes=true ;;
+          *) exit $rc ;;
+        esac
+        echo "##vso[task.setvariable variable=changes;isOutput=true]$changes"
+    env: ${{ parameters.secrets }}

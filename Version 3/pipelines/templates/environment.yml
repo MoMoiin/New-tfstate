@@ -1,0 +1,74 @@
+# Plan + apply stages for one environment: every unit under */env/<environment>[/<customer>].
+#
+# Microsoft-hosted agents: ci-runner creates the self-hosted ones, so the platform can't need
+# them. Nothing here writes to a firewalled data plane (e.g. Key Vault secrets); anything that
+# does needs a self-hosted pool.
+
+parameters:
+  - name: environment # a key of `environments` in global/global.hcl, e.g. prod-uks
+    type: string
+  - name: after # stage this one waits for
+    type: string
+  - name: firstDeploy
+    type: boolean
+    default: false
+
+stages:
+  - stage: plan_${{ replace(parameters.environment, '-', '_') }}
+    displayName: Plan ${{ parameters.environment }}
+    dependsOn: ${{ parameters.after }}
+    # Runs after a skipped apply too, so PRs plan every environment.
+    condition: and(not(or(failed(), canceled())), ${{ not(parameters.firstDeploy) }})
+    variables:
+      - group: operate-iac-${{ parameters.environment }}
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      - job: plan
+        displayName: terragrunt run --all plan
+        steps:
+          - template: tools.yml
+          - template: terragrunt.yml
+            parameters:
+              environment: ${{ parameters.environment }}
+              args: --out-dir "$(Build.ArtifactStagingDirectory)/plans" -- plan -input=false
+          - publish: $(Build.ArtifactStagingDirectory)/plans
+            artifact: plans-${{ parameters.environment }}
+
+  - stage: apply_${{ replace(parameters.environment, '-', '_') }}
+    displayName: Apply ${{ parameters.environment }}
+    dependsOn:
+      - ${{ parameters.after }}
+      - plan_${{ replace(parameters.environment, '-', '_') }}
+    condition: >-
+      and(not(or(failed(), canceled())),
+          ne(variables['Build.Reason'], 'PullRequest'),
+          eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    variables:
+      - group: operate-iac-${{ parameters.environment }}
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      - deployment: apply
+        displayName: terragrunt run --all apply
+        environment: operate-iac-${{ parameters.environment }}
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - template: tools.yml
+                - ${{ if parameters.firstDeploy }}:
+                    # New environment: downstream plans can't run until upstream units exist,
+                    # so plan + apply each unit in dependency order instead.
+                    - template: terragrunt.yml
+                      parameters:
+                        environment: ${{ parameters.environment }}
+                        args: -- apply -input=false
+                - ${{ else }}:
+                    - download: current
+                      artifact: plans-${{ parameters.environment }}
+                    - template: terragrunt.yml
+                      parameters:
+                        environment: ${{ parameters.environment }}
+                        args: --out-dir "$(Pipeline.Workspace)/plans-${{ parameters.environment }}" -- apply -input=false

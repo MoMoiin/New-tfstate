@@ -1,0 +1,44 @@
+# Applies the saved plan of one service (for one customer), after its upstream services.
+# Skipped when the plan had no changes; a skipped upstream doesn't block it, a failed one does.
+
+parameters:
+  - name: key
+    type: string
+  - name: service
+    type: string
+  - name: customer
+    type: string
+  - name: environment
+    type: string
+  - name: terraformVersion
+    type: string
+  - name: secrets
+    type: object
+  - name: dependsOn
+    type: object
+
+jobs:
+  - deployment: ${{ parameters.key }}
+    displayName: ${{ parameters.service }} ${{ parameters.customer }}
+    dependsOn: ${{ parameters.dependsOn }}
+    condition: >-
+      and(not(failed()), not(canceled()),
+          eq(stageDependencies.plan_${{ replace(parameters.environment, '-', '_') }}.${{ parameters.key }}.outputs['tf.changes'], 'true'))
+    environment: operate-iac-${{ parameters.environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: self
+
+            - download: current
+              artifact: tfplan-${{ parameters.environment }}-${{ parameters.key }}
+
+            - template: terraform-steps.yml
+              parameters:
+                service: ${{ parameters.service }}
+                customer: ${{ parameters.customer }}
+                environment: ${{ parameters.environment }}
+                terraformVersion: ${{ parameters.terraformVersion }}
+                secrets: ${{ parameters.secrets }}
+                args: apply -input=false $(Pipeline.Workspace)/tfplan-${{ parameters.environment }}-${{ parameters.key }}/tfplan
